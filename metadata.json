@@ -1,0 +1,6 @@
+{
+  "name": "EduInteractive OS",
+  "description": "An event-sourced learning runtime operating system with AI-governed adaptive learning.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

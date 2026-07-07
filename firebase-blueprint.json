@@ -1,0 +1,72 @@
+{
+  "collections": {
+    "event_store": {
+      "description": "Immutable ledger of all system, derived, and advisory events.",
+      "fields": {
+        "eventId": "string",
+        "eventType": "string",
+        "version": "string",
+        "sessionId": "string",
+        "timestamp": "timestamp",
+        "actorId": "string",
+        "payload": "map",
+        "metadata": "map"
+      },
+      "indexes": [
+        {
+          "fields": {
+            "sessionId": "asc",
+            "timestamp": "asc"
+          }
+        },
+        {
+          "fields": {
+            "eventType": "asc",
+            "timestamp": "desc"
+          }
+        }
+      ]
+    },
+    "session_states": {
+      "description": "Projections of active learning session states.",
+      "fields": {
+        "sessionId": "string",
+        "studentId": "string",
+        "currentObjectId": "string",
+        "state": "string",
+        "context": "map",
+        "lastUpdated": "timestamp"
+      }
+    },
+    "evidence_artifacts": {
+      "description": "Immutable artifacts of student learning proofs.",
+      "fields": {
+        "evidenceId": "string",
+        "sessionId": "string",
+        "studentId": "string",
+        "competencyIds": "array",
+        "payload": "map",
+        "confidenceScore": "number",
+        "timestamp": "timestamp"
+      }
+    },
+    "competency_states": {
+      "description": "Current mastery trajectory for students across competencies.",
+      "fields": {
+        "studentId": "string",
+        "competencyId": "string",
+        "masteryVector": "map",
+        "masteryStage": "string",
+        "lastUpdated": "timestamp"
+      }
+    },
+    "teachers": {
+      "description": "Teacher accounts and hashed credentials",
+      "fields": {
+        "email": "string",
+        "passwordHash": "string",
+        "createdAt": "timestamp"
+      }
+    }
+  }
+}
