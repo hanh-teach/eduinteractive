@@ -15,6 +15,9 @@ const privateKey = process.env.FIREBASE_PRIVATE_KEY;
 const googleAppCreds = process.env.GOOGLE_APPLICATION_CREDENTIALS;
 const serviceAccountKeyJson = process.env.FIREBASE_SERVICE_ACCOUNT_KEY;
 
+const isGCP = !!(process.env.GAE_SERVICE || process.env.K_SERVICE || process.env.GOOGLE_CLOUD_PROJECT || process.env.GOOGLE_APPLICATION_CREDENTIALS);
+const isRender = !!process.env.RENDER;
+
 let configProjectId: string | undefined;
 try {
   const configPath = path.join(process.cwd(), 'firebase-applet-config.json');
@@ -48,8 +51,9 @@ try {
       }
     }
 
-    // 2. Try explicit credentials from environment
-    if (!getApps().length && activeProjectId && clientEmail && privateKey && privateKey.length > 100) {
+    // 2. Try explicit credentials from environment (triplet)
+    // Private keys are long RSA keys, usually > 1500 chars. We check for > 500 to be safe.
+    if (!getApps().length && activeProjectId && clientEmail && privateKey && privateKey.length > 500) {
       try {
         const formattedPrivateKey = privateKey.replace(/\\n/g, '\n');
         initializeApp({
@@ -66,7 +70,8 @@ try {
     }
 
     // 3. Try default initialization (Application Default Credentials)
-    if (!getApps().length) {
+    // Only attempt if we are on GCP or have explicit ADC path, otherwise it will likely crash on non-GCP environments like Render
+    if (!getApps().length && (isGCP || googleAppCreds)) {
       try {
         // If we have a project ID slug, use it explicitly
         if (activeProjectId && isNaN(Number(activeProjectId))) {
@@ -87,8 +92,8 @@ try {
       adminAuth = getAuth();
     } else {
       console.warn(
-        '[Firebase] WARNING: No Firebase credentials found in environment. Falling back to IN-MEMORY storage.\n' +
-        'Please configure FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, and FIREBASE_PRIVATE_KEY inside .env.local'
+        '[Firebase] WARNING: No valid Firebase credentials found. Falling back to IN-MEMORY storage.\n' +
+        'To use Firestore, please provide a valid FIREBASE_SERVICE_ACCOUNT_KEY (JSON) or the credential triplet (Project ID, Client Email, Private Key).'
       );
       isFirestoreFallback = true;
     }

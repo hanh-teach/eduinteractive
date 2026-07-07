@@ -93,42 +93,25 @@ export default function App() {
     localStorage.setItem('edu_os_lang', lang);
   }, [lang]);
 
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (u) => {
-      if (u) {
-        setUser(u);
-        const t = await getIdToken(u);
-        setToken(t);
-      } else {
-        setUser(null);
-        setToken(null);
-      }
-    });
-    return () => unsubscribe();
-  }, []);
+  const t = translations[lang];
 
   useEffect(() => {
-    if (viewMode === 'student' && !user) {
+    if (viewMode === 'student' && !token) {
       const loginAnon = async () => {
         try {
           const res = await fetch('/api/v1/student/register-anonymous', { method: 'POST' });
           const data = await res.json();
           if (data.token) {
-            // Bypass Firebase sign-in due to signBlob permission issues
             setToken(data.token);
-            setUser({ uid: data.uid, email: null, isAnonymous: true } as any);
-          } else {
-            console.error('No token returned from anonymous registration endpoint');
+            setUser({ uid: data.uid, isAnonymous: true });
           }
         } catch (err) {
-          console.error('Anonymous registration failed:', err);
+          console.error('Anonymous login failed:', err);
         }
       };
       loginAnon();
     }
-  }, [viewMode, user]);
-
-  const t = translations[lang];
+  }, [viewMode, token]);
 
   const fetchSessionData = async (targetSessionId: string) => {
     if (!targetSessionId) return;
