@@ -10,8 +10,24 @@ import fs from 'fs';
 import { db, adminAuth, isFirestoreFallback } from './src/server/firebase.js';
 import { Timestamp } from 'firebase-admin/firestore';
 
+import crypto from 'crypto';
+
 const firebaseAppConfig = JSON.parse(fs.readFileSync('./firebase-applet-config.json', 'utf-8'));
-const JWT_SECRET = process.env.JWT_SECRET || firebaseAppConfig.apiKey || 'edu-os-secret-key';
+
+// SECURITY: never fall back to a hardcoded/guessable secret (e.g. the public Firebase
+// web apiKey, or a fixed string) — anyone who knows it could forge a 'teacher' JWT and
+// bypass all authorization. If JWT_SECRET isn't configured, generate a random one for
+// this process only, and warn loudly so the operator sets a persistent one on the host.
+let JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  JWT_SECRET = crypto.randomBytes(32).toString('hex');
+  console.warn(
+    '[SECURITY WARNING] JWT_SECRET is not set in the environment. Generated a random ' +
+    'secret for THIS PROCESS ONLY — all existing tokens will become invalid on the next ' +
+    'restart/redeploy, forcing everyone to log in again. Set a persistent JWT_SECRET ' +
+    '(e.g. `openssl rand -hex 32`) in your environment variables (Render/etc.) to fix this.'
+  );
+}
 
 // --- In-memory fallback stores ---
 const memoryTeachers = new Map<string, any>();
@@ -377,6 +393,11 @@ async function startServer() {
   // Query API: Get Student Competencies
   app.get('/api/v1/students/:studentId/competencies', async (req, res) => {
     try {
+      const user = (req as any).user;
+      // Route authorization: students may only read their own competency state.
+      if (user.role === 'student' && req.params.studentId !== user.uid) {
+        return res.status(403).json({ error: 'Forbidden: Cannot access other student competencies' });
+      }
       const competencies = await getStudentCompetencies(req.params.studentId);
       res.json({ competencies });
     } catch (err) {
