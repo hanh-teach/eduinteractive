@@ -1,9 +1,11 @@
 import { initializeApp, cert, getApps } from 'firebase-admin/app';
 import { getFirestore, Firestore } from 'firebase-admin/firestore';
+import { getAuth, Auth } from 'firebase-admin/auth';
 import fs from 'fs';
 import path from 'path';
 
 let db: Firestore | null = null;
+let adminAuth: Auth | null = null;
 let isFirestoreFallback = false;
 
 // Determine if we have credentials in the environment or config file
@@ -28,56 +30,72 @@ try {
   const apps = getApps();
   if (apps.length > 0) {
     db = getFirestore();
-  } else if (serviceAccountKeyJson) {
-    try {
-      const serviceAccount = JSON.parse(serviceAccountKeyJson);
-      initializeApp({
-        credential: cert(serviceAccount)
-      });
-      db = getFirestore();
-      console.log('[Firebase] Initialized Admin SDK with FIREBASE_SERVICE_ACCOUNT_KEY JSON string.');
-    } catch (parseError) {
-      console.error('[Firebase] Failed to parse FIREBASE_SERVICE_ACCOUNT_KEY as JSON. It must be the full JSON object. Falling back to Project ID initialization.');
-      const activeProjectId = projectId || configProjectId;
-      if (activeProjectId) {
-        initializeApp({ projectId: activeProjectId });
-        db = getFirestore();
-        console.log(`[Firebase] Initialized Admin SDK with Project ID: ${activeProjectId} (using Google Application Default Credentials).`);
-      } else {
-        throw new Error('Invalid FIREBASE_SERVICE_ACCOUNT_KEY and no Project ID found.');
+    adminAuth = getAuth();
+  } else {
+    // 1. Try FIREBASE_SERVICE_ACCOUNT_KEY JSON string
+    if (serviceAccountKeyJson && serviceAccountKeyJson.startsWith('{')) {
+      try {
+        const serviceAccount = JSON.parse(serviceAccountKeyJson);
+        initializeApp({
+          credential: cert(serviceAccount)
+        });
+        console.log('[Firebase] Initialized Admin SDK with FIREBASE_SERVICE_ACCOUNT_KEY JSON string.');
+      } catch (parseError) {
+        console.error('[Firebase] Failed to parse FIREBASE_SERVICE_ACCOUNT_KEY as JSON.');
       }
     }
-  } else if (projectId && clientEmail && privateKey) {
-    const formattedPrivateKey = privateKey.replace(/\\n/g, '\n');
-    initializeApp({
-      credential: cert({
-        projectId,
-        clientEmail,
-        privateKey: formattedPrivateKey,
-      })
-    });
-    db = getFirestore();
-    console.log(`[Firebase] Initialized Admin SDK with FIREBASE_PROJECT_ID: ${projectId}`);
-  } else if (googleAppCreds) {
-    initializeApp();
-    db = getFirestore();
-    console.log('[Firebase] Initialized Admin SDK with GOOGLE_APPLICATION_CREDENTIALS path.');
-  } else if (projectId || configProjectId) {
-    const activeProjectId = projectId || configProjectId;
-    initializeApp({
-      projectId: activeProjectId
-    });
-    db = getFirestore();
-    console.log(`[Firebase] Initialized Admin SDK with Project ID: ${activeProjectId} (using Google Application Default Credentials).`);
-  } else {
-    console.warn(
-      '[Firebase] WARNING: No Firebase credentials found in environment. Falling back to IN-MEMORY storage.\n' +
-      'Please configure FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, and FIREBASE_PRIVATE_KEY inside .env.local'
-    );
-    isFirestoreFallback = true;
+
+    // 2. Try explicit credentials from environment
+    if (!getApps().length && projectId && clientEmail && privateKey && privateKey.length > 100) {
+      try {
+        const formattedPrivateKey = privateKey.replace(/\\n/g, '\n');
+        initializeApp({
+          credential: cert({
+            projectId,
+            clientEmail,
+            privateKey: formattedPrivateKey,
+          })
+        });
+        console.log(`[Firebase] Initialized Admin SDK with explicit credentials for project: ${projectId}`);
+      } catch (e) {
+        console.error('[Firebase] Failed to initialize with explicit credentials:', e);
+      }
+    }
+
+    // 3. Try default initialization (Application Default Credentials)
+    if (!getApps().length) {
+      try {
+        // First try WITHOUT project ID to let ADC handle everything
+        initializeApp();
+        console.log('[Firebase] Initialized Admin SDK with default initializeApp().');
+      } catch (e) {
+        // Then try WITH project ID if found
+        const activeProjectId = projectId || configProjectId;
+        if (activeProjectId) {
+          try {
+            initializeApp({ projectId: activeProjectId });
+            console.log(`[Firebase] Initialized Admin SDK with Project ID: ${activeProjectId}`);
+          } catch (e2) {
+            console.error('[Firebase] Failed to initialize with Project ID fallback:', e2);
+          }
+        }
+      }
+    }
+
+    // Finalize db and auth if any app was initialized
+    if (getApps().length > 0) {
+      db = getFirestore();
+      adminAuth = getAuth();
+    } else {
+      console.warn(
+        '[Firebase] WARNING: No Firebase credentials found in environment. Falling back to IN-MEMORY storage.\n' +
+        'Please configure FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, and FIREBASE_PRIVATE_KEY inside .env.local'
+      );
+      isFirestoreFallback = true;
+    }
   }
 } catch (error) {
-  console.error('[Firebase] Failed to initialize Firebase Admin SDK. Falling back to IN-MEMORY storage.', error);
+  console.error('[Firebase] Unexpected initialization error. Falling back to IN-MEMORY storage.', error);
   isFirestoreFallback = true;
 }
 
@@ -105,4 +123,4 @@ export function cleanData(obj: any): any {
   return obj;
 }
 
-export { db, isFirestoreFallback };
+export { db, adminAuth, isFirestoreFallback };

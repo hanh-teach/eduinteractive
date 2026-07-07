@@ -4,28 +4,17 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { createServer as createViteServer } from 'vite';
 import { v4 as uuidv4 } from 'uuid';
-import { initializeApp, cert, getApps } from 'firebase-admin/app';
-import { getAuth } from 'firebase-admin/auth';
-import { getFirestore, Timestamp } from 'firebase-admin/firestore';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import fs from 'fs';
+import { db, adminAuth, isFirestoreFallback } from './src/server/firebase.js';
+import { Timestamp } from 'firebase-admin/firestore';
 
 const firebaseAppConfig = JSON.parse(fs.readFileSync('./firebase-applet-config.json', 'utf-8'));
 const JWT_SECRET = process.env.JWT_SECRET || firebaseAppConfig.apiKey || 'edu-os-secret-key';
-const firebaseConfig = firebaseAppConfig;
 
-// Initialize Firebase Admin
-if (!getApps().length) {
-  try {
-    initializeApp({
-      projectId: firebaseAppConfig.projectId
-    });
-  } catch (e) {
-    console.log('Firebase Admin init error:', e);
-  }
-}
-const db = getFirestore();
+// --- In-memory fallback stores ---
+const memoryTeachers = new Map<string, any>();
 
 import { dispatcher } from './src/server/dispatcher.js';
 import { getSessionEvents } from './src/server/event-store.js';
@@ -101,21 +90,39 @@ async function startServer() {
       }
 
       // Check if teacher already exists
-      const teacherRef = db.collection('teachers').doc(email.toLowerCase());
-      const doc = await teacherRef.get();
-      if (doc.exists) {
-        return res.status(400).json({ error: 'User already exists' });
+      const emailKey = email.toLowerCase();
+      let teacherData: any = null;
+
+      if (db) {
+        const teacherRef = db.collection('teachers').doc(emailKey);
+        const doc = await teacherRef.get();
+        if (doc.exists) {
+          return res.status(400).json({ error: 'User already exists' });
+        }
+      } else {
+        if (memoryTeachers.has(emailKey)) {
+          return res.status(400).json({ error: 'User already exists' });
+        }
       }
 
-      // Hash password and store in Firestore
+      // Hash password and store
       const passwordHash = await bcrypt.hash(password, 10);
-      await teacherRef.set({
-        email: email.toLowerCase(),
+      const newTeacher = {
+        email: emailKey,
         passwordHash,
-        createdAt: Timestamp.now()
-      });
+        createdAt: new Date().toISOString()
+      };
 
-      const uid = email.toLowerCase();
+      if (db) {
+        await db.collection('teachers').doc(emailKey).set({
+          ...newTeacher,
+          createdAt: Timestamp.now()
+        });
+      } else {
+        memoryTeachers.set(emailKey, newTeacher);
+      }
+
+      const uid = emailKey;
       const token = jwt.sign({ uid, email: email.toLowerCase(), role: 'teacher' }, JWT_SECRET, { expiresIn: '7d' });
       res.json({ success: true, token, uid });
     } catch (error: any) {
@@ -132,14 +139,24 @@ async function startServer() {
       }
 
       // Fetch teacher record
-      const teacherRef = db.collection('teachers').doc(email.toLowerCase());
-      const doc = await teacherRef.get();
-      if (!doc.exists) {
+      const emailKey = email.toLowerCase();
+      let teacherData: any = null;
+
+      if (db) {
+        const teacherRef = db.collection('teachers').doc(emailKey);
+        const doc = await teacherRef.get();
+        if (doc.exists) {
+          teacherData = doc.data();
+        }
+      } else {
+        teacherData = memoryTeachers.get(emailKey);
+      }
+
+      if (!teacherData) {
         return res.status(401).json({ error: 'Invalid email or password' });
       }
 
-      const teacherData = doc.data();
-      const isValid = await bcrypt.compare(password, teacherData?.passwordHash);
+      const isValid = await bcrypt.compare(password, teacherData.passwordHash);
       if (!isValid) {
         return res.status(401).json({ error: 'Invalid email or password' });
       }
@@ -176,7 +193,10 @@ async function startServer() {
     } catch (err) {
       // Fallback: try Firebase verifyIdToken if it was a real Firebase token
       try {
-        const decodedToken = await getAuth().verifyIdToken(token);
+        if (!adminAuth) {
+          throw new Error('Firebase Auth not available');
+        }
+        const decodedToken = await adminAuth.verifyIdToken(token);
         (req as any).user = {
           uid: decodedToken.uid,
           email: decodedToken.email,
