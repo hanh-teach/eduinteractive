@@ -9,7 +9,7 @@ let adminAuth: Auth | null = null;
 let isFirestoreFallback = false;
 
 // Determine if we have credentials in the environment or config file
-const projectId = process.env.FIREBASE_PROJECT_ID;
+const envProjectId = process.env.FIREBASE_PROJECT_ID;
 const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
 const privateKey = process.env.FIREBASE_PRIVATE_KEY;
 const googleAppCreds = process.env.GOOGLE_APPLICATION_CREDENTIALS;
@@ -25,6 +25,9 @@ try {
 } catch (e) {
   // ignore reading error
 }
+
+// Prefer the slug from config if available, as environment might have a numeric project ID
+const activeProjectId = configProjectId || envProjectId;
 
 try {
   const apps = getApps();
@@ -46,17 +49,17 @@ try {
     }
 
     // 2. Try explicit credentials from environment
-    if (!getApps().length && projectId && clientEmail && privateKey && privateKey.length > 100) {
+    if (!getApps().length && activeProjectId && clientEmail && privateKey && privateKey.length > 100) {
       try {
         const formattedPrivateKey = privateKey.replace(/\\n/g, '\n');
         initializeApp({
           credential: cert({
-            projectId,
+            projectId: activeProjectId,
             clientEmail,
             privateKey: formattedPrivateKey,
           })
         });
-        console.log(`[Firebase] Initialized Admin SDK with explicit credentials for project: ${projectId}`);
+        console.log(`[Firebase] Initialized Admin SDK with explicit credentials for project: ${activeProjectId}`);
       } catch (e) {
         console.error('[Firebase] Failed to initialize with explicit credentials:', e);
       }
@@ -65,20 +68,16 @@ try {
     // 3. Try default initialization (Application Default Credentials)
     if (!getApps().length) {
       try {
-        // First try WITHOUT project ID to let ADC handle everything
-        initializeApp();
-        console.log('[Firebase] Initialized Admin SDK with default initializeApp().');
-      } catch (e) {
-        // Then try WITH project ID if found
-        const activeProjectId = projectId || configProjectId;
-        if (activeProjectId) {
-          try {
-            initializeApp({ projectId: activeProjectId });
-            console.log(`[Firebase] Initialized Admin SDK with Project ID: ${activeProjectId}`);
-          } catch (e2) {
-            console.error('[Firebase] Failed to initialize with Project ID fallback:', e2);
-          }
+        // If we have a project ID slug, use it explicitly
+        if (activeProjectId && isNaN(Number(activeProjectId))) {
+          initializeApp({ projectId: activeProjectId });
+          console.log(`[Firebase] Initialized Admin SDK with Project ID: ${activeProjectId}`);
+        } else {
+          initializeApp();
+          console.log('[Firebase] Initialized Admin SDK with default initializeApp().');
         }
+      } catch (e) {
+        console.error('[Firebase] Failed default initialization:', e);
       }
     }
 
